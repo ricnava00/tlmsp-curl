@@ -1,3 +1,16 @@
+# TLSMP curl
+
+curl modified to support TLMSP (ETSI TS 103 523-2)
+
+## Licensing information
+
+Contributions to this repositories are licensed according to the ETSI
+Software License (see LICENSE).
+
+The original implementation of curl is released under  
+its own terms (see below and COPYING).
+
+
 ![curl logo](https://curl.haxx.se/logo/curl-logo.svg)
 
 [![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/63/badge)](https://bestpractices.coreinfrastructure.org/projects/63)
