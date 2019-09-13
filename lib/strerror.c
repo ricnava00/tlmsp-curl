@@ -19,6 +19,11 @@
  * KIND, either express or implied.
  *
  ***************************************************************************/
+/*
+ * Copyright (c) 2019 Not for Radio, LLC
+ *
+ * Released under the ETSI Software License (see LICENSE)
+ */
 
 #include "curl_setup.h"
 
@@ -310,6 +315,12 @@ curl_easy_strerror(CURLcode error)
 
   case CURLE_RECURSIVE_API_CALL:
     return "API function called from within callback";
+
+  case CURLE_UNKNOWN_DATACONTEXT:
+    return "Backend does not recognize the datacontext used";
+
+  case CURLE_TRANSPORT_RECONNECT:
+    return "Transport requires reconnect";
 
     /* error codes not used by current libcurl */
   case CURLE_OBSOLETE20:

@@ -19,6 +19,11 @@
  * KIND, either express or implied.
  *
  ***************************************************************************/
+/*
+ * Copyright (c) 2019 Not for Radio, LLC
+ *
+ * Released under the ETSI Software License (see LICENSE)
+ */
 
 #include "curl_setup.h"
 
@@ -2740,6 +2745,16 @@ static CURLcode vsetopt(struct Curl_easy *data, CURLoption option,
     result = Curl_altsvc_ctrl(data->asi, arg);
     if(result)
       return result;
+    break;
+#endif
+#ifdef USE_TLMSP
+  case CURLOPT_TLMSP_CFG_FILE:
+    /*
+     * This is the path name to a file that contains the TLMSP
+     * configuration.
+     */
+    result = Curl_setstropt(&data->set.str[STRING_TLMSP_CFG_FILE],
+                            va_arg(param, char *));
     break;
 #endif
   default:

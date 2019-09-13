@@ -21,6 +21,11 @@
  * KIND, either express or implied.
  *
  ***************************************************************************/
+/*
+ * Copyright (c) 2019 Not for Radio, LLC
+ *
+ * Released under the ETSI Software License (see LICENSE)
+ */
 
 #if defined(BUILDING_LIBCURL) && !defined(CURL_NO_OLDIES)
 #define CURL_NO_OLDIES
@@ -651,6 +656,9 @@ int netware_init(void);
     defined(USE_CYASSL) || defined(USE_SCHANNEL) || \
     defined(USE_SECTRANSP) || defined(USE_GSKIT) || defined(USE_MESALINK)
 #define USE_SSL    /* SSL support has been enabled */
+#  if defined(HAVE_TLMSP) && !defined(CURL_DISABLE_TLMSP)
+#  define USE_TLMSP    /* TLMSP support has been enabled */
+#  endif
 #endif
 
 /* Single point where USE_SPNEGO definition might be defined */

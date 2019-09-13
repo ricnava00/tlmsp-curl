@@ -19,6 +19,11 @@
  * KIND, either express or implied.
  *
  ***************************************************************************/
+/*
+ * Copyright (c) 2019 Not for Radio, LLC
+ *
+ * Released under the ETSI Software License (see LICENSE)
+ */
 
 #include "curl_setup.h"
 
@@ -753,6 +758,14 @@ static void conn_free(struct connectdata *conn)
 #ifdef USE_SSL
   Curl_safefree(conn->ssl_extra);
 #endif
+
+#ifdef USE_TLMSP
+  if(conn->tlmsp_cfg) {
+    tlmsp_cfg_free(conn->tlmsp_cfg);
+    TLMSP_reconnect_state_free(conn->tlmsp_reconnect_state);
+  }
+#endif
+
   free(conn); /* free all the connection oriented data */
 }
 
@@ -3403,6 +3416,21 @@ static void reuse_conn(struct connectdata *old_conn,
 #ifdef USE_UNIX_SOCKETS
   Curl_safefree(old_conn->unix_domain_socket);
 #endif
+
+#ifdef USE_TLMSP
+  if(conn->tlmsp_cfg)
+    tlmsp_cfg_free(conn->tlmsp_cfg);
+  conn->tlmsp_cfg = old_conn->tlmsp_cfg;
+  old_conn->tlmsp_cfg = NULL;
+  if(conn->tlmsp_cfg) {
+    memcpy(conn->tlmsp_context_id_for_dc,
+        old_conn->tlmsp_context_id_for_dc,
+        sizeof(conn->tlmsp_context_id_for_dc));
+    conn->tlmsp_reconnect_state = old_conn->tlmsp_reconnect_state;
+    TLMSP_reconnect_state_free(old_conn->tlmsp_reconnect_state);
+    old_conn->tlmsp_reconnect_state = NULL;
+  }
+#endif
 }
 
 /**
@@ -3434,6 +3462,20 @@ static CURLcode create_conn(struct Curl_easy *data,
   bool waitpipe = FALSE;
   size_t max_host_connections = Curl_multi_max_host_connections(data->multi);
   size_t max_total_connections = Curl_multi_max_total_connections(data->multi);
+#ifdef USE_TLMSP
+  char error_buffer[256];
+  const struct tlmsp_cfg *tlmsp_cfg;
+  const char *hostname;
+  char *cfg_host;
+  char *cfg_port_str;
+  char *first_hop_addr;
+  char *first_hop_host;
+  char *first_hop_port_str;
+  int first_hop_addr_type;
+  int remote_port;
+  int i;
+  const struct tlmsp_cfg_context *context;
+#endif
 
   *async = FALSE;
   *in_connect = NULL;
@@ -3677,6 +3719,114 @@ static CURLcode create_conn(struct Curl_easy *data,
   data->set.proxy_ssl.username = data->set.str[STRING_TLSAUTH_USERNAME_PROXY];
   data->set.ssl.password = data->set.str[STRING_TLSAUTH_PASSWORD_ORIG];
   data->set.proxy_ssl.password = data->set.str[STRING_TLSAUTH_PASSWORD_PROXY];
+#endif
+#ifdef USE_TLMSP
+  data->set.ssl.tlmsp_cfg_file = data->set.str[STRING_TLMSP_CFG_FILE];
+
+  /* TLMSP is only supported if there is a config file, a proxy mode is not
+     configured, and the connect_to facility is not otherwise being used. */
+  if((data->set.ssl.tlmsp_cfg_file != NULL) &&
+      (data->set.ssl.tlmsp_cfg_file[0] != '\0') && (!conn->bits.proxy) &&
+      !(conn->bits.conn_to_host || conn->bits.conn_to_port)) {
+    tlmsp_cfg = tlmsp_cfg_parse_file(data->set.ssl.tlmsp_cfg_file,
+        error_buffer, sizeof(error_buffer));
+    if(!tlmsp_cfg) {
+      failf(data, "SSL: couldn't parse TLMSP config file '%s': %s",
+          data->set.ssl.tlmsp_cfg_file, error_buffer);
+      result = CURLE_FILE_COULDNT_READ_FILE;
+      goto out;
+    }
+
+    /* Only enable TLMSP for this connection if the destination matches the
+       server in the configuration file. */
+    hostname = conn->host.rawalloc;
+    remote_port = conn->remote_port;
+
+    if(!tlmsp_util_address_to_host_and_port(TLMSP_UTIL_ADDRESS_UNKNOWN,
+            (const uint8_t *)tlmsp_cfg->server.address,
+            strlen(tlmsp_cfg->server.address), 0,
+            &cfg_host, &cfg_port_str)) {
+      failf(data, "SSL: couldn't interpret TLMSP server address '%s'",
+          tlmsp_cfg->server.address);
+      result = CURLE_BAD_FUNCTION_ARGUMENT;
+      goto out;
+    }
+
+    if((strcmp(hostname, cfg_host) != 0) ||
+        (remote_port != strtol(cfg_port_str, NULL, 10))) {
+      failf(data, "SSL: URL host:port (%s:%d) doesn't match server address "
+          "(%s) in '%s'", hostname, remote_port, tlmsp_cfg->server.address,
+          data->set.ssl.tlmsp_cfg_file);
+      tlmsp_cfg_free(tlmsp_cfg);
+      result = CURLE_URL_MALFORMAT;
+      goto out;
+    }
+    else if(data->state.lastconnect &&
+        data->state.lastconnect->tlmsp_reconnect_state) {
+      conn->tlmsp_reconnect_state =
+          data->state.lastconnect->tlmsp_reconnect_state;
+      data->state.lastconnect->tlmsp_reconnect_state = NULL;
+    }
+    else {
+      /* TLMSP enabled for this connection */
+      conn->tlmsp_cfg = tlmsp_cfg;
+      for(i = 0; i < DATACONTEXT_COUNT; i++) {
+        context = tlmsp_cfg_get_context_by_tag(tlmsp_cfg,
+            datacontext_names[i]);
+        if(context)
+          conn->tlmsp_context_id_for_dc[i] = context->id;
+      }
+
+      first_hop_addr = tlmsp_cfg_get_client_first_hop_address(tlmsp_cfg, false,
+          true, &first_hop_addr_type);
+      if(!first_hop_addr) {
+        free(cfg_host);
+        free(cfg_port_str);
+        failf(data, "SSL: couldn't determine TLMSP first hop address");
+        result = CURLE_OUT_OF_MEMORY;
+        goto out;
+      }
+
+      if(!tlmsp_util_address_to_host_and_port(first_hop_addr_type,
+              (const uint8_t *)first_hop_addr, strlen(first_hop_addr), 0,
+              &first_hop_host, &first_hop_port_str)) {
+        free(first_hop_addr);
+        free(cfg_host);
+        free(cfg_port_str);
+        failf(data, "SSL: couldn't convert first hop addr to host and port");
+        result = CURLE_BAD_FUNCTION_ARGUMENT;
+        goto out;
+      }
+      free(first_hop_addr);
+
+      if((strcmp(cfg_host, first_hop_host) != 0) ||
+          (strcmp(cfg_port_str, first_hop_port_str) != 0)) {
+        /* The first hop is not the server, so set up the conn_to_host /
+           conn_to_port mechanism. */
+        conn->conn_to_host.rawalloc = first_hop_host;
+        conn->conn_to_host.name = first_hop_host;
+        conn->bits.conn_to_host = TRUE;
+        conn->conn_to_port = (int)strtol(first_hop_port_str, NULL, 10);
+        conn->bits.conn_to_port = TRUE;
+        result = idnconvert_hostname(conn, &conn->conn_to_host);
+        if(result) {
+          free(cfg_host);
+          free(cfg_port_str);
+          /* first_hop_host is now owned by conn */
+          free(first_hop_port_str);
+          goto out;
+        }
+      }
+      else {
+        free(first_hop_host);
+      }
+      free(first_hop_port_str);
+      data->set.ssl.primary.version = CURL_SSLVERSION_TLSv1_2;
+      data->set.ssl.primary.version_max = CURL_SSLVERSION_MAX_TLSv1_2;
+    }
+    free(cfg_host);
+    free(cfg_port_str);
+  }
 #endif
 
   if(!Curl_clone_primary_ssl_config(&data->set.ssl.primary,

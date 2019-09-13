@@ -21,6 +21,11 @@
  * KIND, either express or implied.
  *
  ***************************************************************************/
+/*
+ * Copyright (c) 2019 Not for Radio, LLC
+ *
+ * Released under the ETSI Software License (see LICENSE)
+ */
 
 /*
  * If you have libcurl problems, all docs and details are found here:
@@ -603,6 +608,10 @@ typedef enum {
                                     */
   CURLE_RECURSIVE_API_CALL,      /* 93 - an api function was called from
                                     inside a callback */
+  CURLE_UNKNOWN_DATACONTEXT,     /* 94 - backend does not recognize given
+                                    datacontext */
+  CURLE_TRANSPORT_RECONNECT,     /* 95 - transport requires new connection
+                                    attempt */
   CURL_LAST /* never use! */
 } CURLcode;
 
@@ -1924,6 +1933,13 @@ typedef enum {
   /* maximum age of a connection to consider it for reuse (in seconds) */
   CINIT(MAXAGE_CONN, LONG, 288),
 
+  /* Set this option to the name of the TLMSP config file to use.  If no
+     config file is specified, a default protocol version range will be
+     used, no initial middleboxes will be configured, no discovered
+     middleboxes will be accepted, and all application data will be placed
+     in a single context with ID 1. */
+  CINIT(TLMSP_CFG_FILE, STRINGPOINT, 286),
+
   CURLOPT_LASTENTRY /* the last unused */
 } CURLoption;
 
@@ -2787,6 +2803,7 @@ typedef struct {
 #define CURL_VERSION_MULTI_SSL    (1<<22) /* Multiple SSL backends available */
 #define CURL_VERSION_BROTLI       (1<<23) /* Brotli features are present. */
 #define CURL_VERSION_ALTSVC       (1<<24) /* Alt-Svc handling built-in */
+#define CURL_VERSION_TLMSP        (1<<25) /* TLMSP is supported */
 
  /*
  * NAME curl_version_info()

@@ -21,6 +21,11 @@
  * KIND, either express or implied.
  *
  ***************************************************************************/
+/*
+ * Copyright (c) 2019 Not for Radio, LLC
+ *
+ * Released under the ETSI Software License (see LICENSE)
+ */
 
 #include "curl_setup.h"
 
@@ -46,6 +51,16 @@ void Curl_failf(struct Curl_easy *, const char *fmt, ...);
 #endif /* CURL_DISABLE_VERBOSE_STRINGS */
 
 #define failf Curl_failf
+
+typedef enum {
+  DATACONTEXT_HEADER,
+  DATACONTEXT_BODY,
+
+  /* final entry gives the count */
+  DATACONTEXT_COUNT
+} datacontext;
+
+extern const char *datacontext_names[DATACONTEXT_COUNT];
 
 #define CLIENTWRITE_BODY   (1<<0)
 #define CLIENTWRITE_HEADER (1<<1)
@@ -76,6 +91,13 @@ CURLcode Curl_write(struct connectdata *conn,
                     curl_socket_t sockfd,
                     const void *mem, size_t len,
                     ssize_t *written);
+/* internal write-function, same as Curl_write() but with additional data
+   context parameter */
+CURLcode Curl_write_dc(struct connectdata *conn,
+                       curl_socket_t sockfd,
+                       const void *mem, size_t len,
+                       datacontext dc,
+                       ssize_t *written);
 
 /* internal write-function, does plain sockets ONLY */
 CURLcode Curl_write_plain(struct connectdata *conn,

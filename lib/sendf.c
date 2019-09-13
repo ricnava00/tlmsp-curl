@@ -19,6 +19,11 @@
  * KIND, either express or implied.
  *
  ***************************************************************************/
+/*
+ * Copyright (c) 2019 Not for Radio, LLC
+ *
+ * Released under the ETSI Software License (see LICENSE)
+ */
 
 #include "curl_setup.h"
 
@@ -48,6 +53,11 @@
 #include "curl_printf.h"
 #include "curl_memory.h"
 #include "memdebug.h"
+
+const char *datacontext_names[DATACONTEXT_COUNT] = {
+  [DATACONTEXT_HEADER] = "header",
+  [DATACONTEXT_BODY]   ="body",
+};
 
 #ifdef CURL_DO_LINEEND_CONV
 /*
@@ -346,6 +356,48 @@ CURLcode Curl_write(struct connectdata *conn,
   int num = (sockfd == conn->sock[SECONDARYSOCKET]);
 
   bytes_written = conn->send[num](conn, num, mem, len, &result);
+
+  *written = bytes_written;
+  if(bytes_written >= 0)
+    /* we completely ignore the curlcode value when subzero is not returned */
+    return CURLE_OK;
+
+  /* handle CURLE_AGAIN or a send failure */
+  switch(result) {
+  case CURLE_AGAIN:
+    *written = 0;
+    return CURLE_OK;
+
+  case CURLE_OK:
+    /* general send failure */
+    return CURLE_SEND_ERROR;
+
+  default:
+    /* we got a specific curlcode, forward it */
+    return result;
+  }
+}
+
+/*
+ * Curl_write_dc() is Curl_write() with an extra data context parameter that
+ * protocols can use to mark up data for the use of socket implementations
+ * that support it.
+ */
+CURLcode Curl_write_dc(struct connectdata *conn,
+                       curl_socket_t sockfd,
+                       const void *mem,
+                       size_t len,
+                       datacontext dc,
+                       ssize_t *written)
+{
+  ssize_t bytes_written;
+  CURLcode result = CURLE_OK;
+  int num = (sockfd == conn->sock[SECONDARYSOCKET]);
+
+  if(conn->send_dc[num] != NULL)
+    bytes_written = conn->send_dc[num](conn, num, mem, len, dc, &result);
+  else
+    bytes_written = conn->send[num](conn, num, mem, len, &result);
 
   *written = bytes_written;
   if(bytes_written >= 0)

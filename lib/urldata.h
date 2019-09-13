@@ -21,6 +21,11 @@
  * KIND, either express or implied.
  *
  ***************************************************************************/
+/*
+ * Copyright (c) 2019 Not for Radio, LLC
+ *
+ * Released under the ETSI Software License (see LICENSE)
+ */
 
 /* This file is for lib internal stuff */
 
@@ -103,12 +108,22 @@
 #include "hash.h"
 #include "splay.h"
 
+#include "sendf.h"
+
 /* return the count of bytes sent, or -1 on error */
 typedef ssize_t (Curl_send)(struct connectdata *conn, /* connection data */
                             int sockindex,            /* socketindex */
                             const void *buf,          /* data to write */
                             size_t len,               /* max amount to write */
                             CURLcode *err);           /* error to return */
+
+/* return the count of bytes sent, or -1 on error */
+typedef ssize_t (Curl_send_dc)(struct connectdata *conn, /* connection data */
+                               int sockindex,         /* socketindex */
+                               const void *buf,       /* data to write */
+                               size_t len,            /* max amount to write */
+                               datacontext dc,        /* data context */
+                               CURLcode *err);        /* error to return */
 
 /* return the count of bytes read, or -1 on error */
 typedef ssize_t (Curl_recv)(struct connectdata *conn, /* connection data */
@@ -147,6 +162,12 @@ typedef ssize_t (Curl_recv)(struct connectdata *conn, /* connection data */
 #include <libssh2.h>
 #include <libssh2_sftp.h>
 #endif /* HAVE_LIBSSH2_H */
+
+#ifdef USE_TLMSP
+#include <openssl/tlmsp.h>
+#include <tlmsp-tools/libtlmsp-cfg.h>
+#include <tlmsp-tools/libtlmsp-util.h>
+#endif
 
 /* Initial size of the buffer to store headers in, it'll be enlarged in case
    of need. */
@@ -243,6 +264,9 @@ struct ssl_config_data {
   char *username; /* TLS username (for, e.g., SRP) */
   char *password; /* TLS password (for, e.g., SRP) */
   enum CURL_TLSAUTH authtype; /* TLS authentication type (default SRP) */
+#endif
+#ifdef USE_TLMSP
+  char *tlmsp_cfg_file;  /* path to file containing tlmsp config */
 #endif
   bit certinfo:1;     /* gather lots of certificate info */
   bit falsestart:1;
@@ -885,6 +909,7 @@ struct connectdata {
                             accept() */
   Curl_recv *recv[2];
   Curl_send *send[2];
+  Curl_send_dc *send_dc[2];
 
 #ifdef USE_RECV_BEFORE_SEND_WORKAROUND
   struct postponed_data postponed[2]; /* two buffers for two sockets */
@@ -893,6 +918,13 @@ struct connectdata {
   struct ssl_connect_data proxy_ssl[2]; /* this is for proxy ssl-stuff */
 #ifdef USE_SSL
   void *ssl_extra; /* separately allocated backend-specific data */
+#endif
+#ifdef USE_TLMSP
+  const struct tlmsp_cfg *tlmsp_cfg;
+  /* TLMSP context ID for each data context, direct indexed by data context
+     value. */
+  tlmsp_context_id_t tlmsp_context_id_for_dc[DATACONTEXT_COUNT];
+  const TLMSP_ReconnectState *tlmsp_reconnect_state;
 #endif
   struct ssl_primary_config ssl_config;
   struct ssl_primary_config proxy_ssl_config;
@@ -1492,6 +1524,9 @@ enum dupstring {
   STRING_DOH,                   /* CURLOPT_DOH_URL */
 #ifdef USE_ALTSVC
   STRING_ALTSVC,                /* CURLOPT_ALTSVC */
+#endif
+#ifdef USE_TLMSP
+  STRING_TLMSP_CFG_FILE,        /* CURLOPT_TLMSP_CFG_FILE */
 #endif
   /* -- end of zero-terminated strings -- */
 

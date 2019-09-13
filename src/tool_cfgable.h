@@ -21,6 +21,11 @@
  * KIND, either express or implied.
  *
  ***************************************************************************/
+/*
+ * Copyright (c) 2019 Not for Radio, LLC
+ *
+ * Released under the ETSI Software License (see LICENSE)
+ */
 #include "tool_setup.h"
 
 #include "tool_sdecls.h"
@@ -262,6 +267,7 @@ struct OperationConfig {
                                      0 is valid. default: CURL_HET_DEFAULT. */
   bool haproxy_protocol;          /* whether to send HAProxy protocol v1 */
   bool disallow_username_in_url;  /* disallow usernames in URLs */
+  char *tlmsp_cfg_file;           /* file containing TLMSP configuration */
   struct GlobalConfig *global;
   struct OperationConfig *prev;
   struct OperationConfig *next;   /* Always last in the struct */

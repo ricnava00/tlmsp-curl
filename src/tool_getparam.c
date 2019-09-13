@@ -19,6 +19,11 @@
  * KIND, either express or implied.
  *
  ***************************************************************************/
+/*
+ * Copyright (c) 2019 Not for Radio, LLC
+ *
+ * Released under the ETSI Software License (see LICENSE)
+ */
 #include "tool_setup.h"
 
 #include "strcase.h"
@@ -305,6 +310,7 @@ static const struct LongShort aliases[]= {
   {"S",  "show-error",               ARG_BOOL},
   {"t",  "telnet-option",            ARG_STRING},
   {"T",  "upload-file",              ARG_FILENAME},
+  {"Tm", "tlmsp",                    ARG_FILENAME},
   {"u",  "user",                     ARG_STRING},
   {"U",  "proxy-user",               ARG_STRING},
   {"v",  "verbose",                  ARG_BOOL},
@@ -2003,39 +2009,51 @@ ParameterError getparameter(const char *flag, /* f or -long-flag */
         return err;
       break;
     case 'T':
-      /* we are uploading */
-    {
-      struct getout *url;
-      if(!config->url_ul)
-        config->url_ul = config->url_list;
-      if(config->url_ul) {
-        /* there's a node here, if it already is filled-in continue to find
-           an "empty" node */
-        while(config->url_ul && (config->url_ul->flags & GETOUT_UPLOAD))
-          config->url_ul = config->url_ul->next;
+      switch(subletter) {
+      case '\0':
+        /* we are uploading */
+      {
+        struct getout *url;
+        if(!config->url_ul)
+          config->url_ul = config->url_list;
+        if(config->url_ul) {
+          /* there's a node here, if it already is filled-in continue to find
+             an "empty" node */
+          while(config->url_ul && (config->url_ul->flags & GETOUT_UPLOAD))
+            config->url_ul = config->url_ul->next;
+        }
+
+        /* now there might or might not be an available node to fill in! */
+
+        if(config->url_ul)
+          /* existing node */
+          url = config->url_ul;
+        else
+          /* there was no free node, create one! */
+          config->url_ul = url = new_getout(config);
+
+        if(!url)
+          return PARAM_NO_MEM;
+
+        url->flags |= GETOUT_UPLOAD; /* mark -T used */
+        if(!*nextarg)
+          url->flags |= GETOUT_NOUPLOAD;
+        else {
+          /* "-" equals stdin, but keep the string around for now */
+          GetStr(&url->infile, nextarg);
+        }
       }
-
-      /* now there might or might not be an available node to fill in! */
-
-      if(config->url_ul)
-        /* existing node */
-        url = config->url_ul;
-      else
-        /* there was no free node, create one! */
-        config->url_ul = url = new_getout(config);
-
-      if(!url)
-        return PARAM_NO_MEM;
-
-      url->flags |= GETOUT_UPLOAD; /* mark -T used */
-      if(!*nextarg)
-        url->flags |= GETOUT_NOUPLOAD;
-      else {
-        /* "-" equals stdin, but keep the string around for now */
-        GetStr(&url->infile, nextarg);
+      break;
+      case 'm': /* --tlmsp */
+        if(curlinfo->features & CURL_VERSION_TLMSP)
+          GetStr(&config->tlmsp_cfg_file, nextarg);
+        else
+          return PARAM_LIBCURL_DOESNT_SUPPORT;
+        break;
+      default: /* unknown flag */
+        return PARAM_OPTION_UNKNOWN;
       }
-    }
-    break;
+      break;
     case 'u':
       /* user:password  */
       GetStr(&config->userpwd, nextarg);

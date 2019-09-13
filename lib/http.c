@@ -19,6 +19,11 @@
  * KIND, either express or implied.
  *
  ***************************************************************************/
+/*
+ * Copyright (c) 2019 Not for Radio, LLC
+ *
+ * Released under the ETSI Software License (see LICENSE)
+ */
 
 #include "curl_setup.h"
 
@@ -1143,22 +1148,16 @@ void Curl_add_buffer_free(Curl_send_buffer **inp)
   *inp = NULL;
 }
 
-/*
- * Curl_add_buffer_send() sends a header buffer and frees all associated
- * memory.  Body data may be appended to the header data if desired.
- *
- * Returns CURLcode
- */
-CURLcode Curl_add_buffer_send(Curl_send_buffer **inp,
-                              struct connectdata *conn,
+static CURLcode add_buffer_send_dc(Curl_send_buffer **inp,
+                                   struct connectdata *conn,
+                                   datacontext dc,
+                                   size_t skip,
+                                   size_t header_to_send,
+                                   size_t body_to_send,
 
-                              /* add the number of sent bytes to this
-                                 counter */
-                              curl_off_t *bytes_written,
-
-                              /* how much of the buffer contains body data */
-                              size_t included_body_bytes,
-                              int socketindex)
+                                   /* the number of sent bytes */
+                                   size_t *bytes_written,
+                                   int socketindex)
 {
   ssize_t amount;
   CURLcode result;
@@ -1168,7 +1167,6 @@ CURLcode Curl_add_buffer_send(Curl_send_buffer **inp,
   struct HTTP *http = data->req.protop;
   size_t sendsize;
   curl_socket_t sockfd;
-  size_t headersize;
   Curl_send_buffer *in = *inp;
 
   DEBUGASSERT(socketindex <= SECONDARYSOCKET);
@@ -1178,20 +1176,17 @@ CURLcode Curl_add_buffer_send(Curl_send_buffer **inp,
   /* The looping below is required since we use non-blocking sockets, but due
      to the circumstances we will just loop and try again and again etc */
 
-  ptr = in->buffer;
-  size = in->size_used;
+  ptr = in->buffer + skip;
+  size = header_to_send + body_to_send;
 
-  headersize = size - included_body_bytes; /* the initial part that isn't body
-                                              is header */
-
-  DEBUGASSERT(size > included_body_bytes);
-
-  result = Curl_convert_to_network(data, ptr, headersize);
-  /* Curl_convert_to_network calls failf if unsuccessful */
-  if(result) {
-    /* conversion failed, free memory and return to the caller */
-    Curl_add_buffer_free(inp);
-    return result;
+  if(header_to_send) {
+    result = Curl_convert_to_network(data, ptr, header_to_send);
+    /* Curl_convert_to_network calls failf if unsuccessful */
+    if(result) {
+      /* conversion failed, free memory and return to the caller */
+      Curl_add_buffer_free(inp);
+      return result;
+    }
   }
 
   if((conn->handler->flags & PROTOPT_SSL ||
@@ -1223,7 +1218,7 @@ CURLcode Curl_add_buffer_send(Curl_send_buffer **inp,
   else
     sendsize = size;
 
-  result = Curl_write(conn, sockfd, ptr, sendsize, &amount);
+  result = Curl_write_dc(conn, sockfd, ptr, sendsize, dc, &amount);
 
   if(!result) {
     /*
@@ -1232,12 +1227,14 @@ CURLcode Curl_add_buffer_send(Curl_send_buffer **inp,
      * only send away a part).
      */
     /* how much of the header that was sent */
-    size_t headlen = (size_t)amount>headersize ? headersize : (size_t)amount;
+    size_t headlen = (size_t)amount>header_to_send ?
+        header_to_send : (size_t)amount;
     size_t bodylen = amount - headlen;
 
     if(data->set.verbose) {
       /* this data _may_ contain binary stuff */
-      Curl_debug(data, CURLINFO_HEADER_OUT, ptr, headlen);
+      if(headlen)
+        Curl_debug(data, CURLINFO_HEADER_OUT, ptr, headlen);
       if(bodylen) {
         /* there was body data sent beyond the initial header part, pass that
            on to the debug callback too */
@@ -1246,10 +1243,7 @@ CURLcode Curl_add_buffer_send(Curl_send_buffer **inp,
       }
     }
 
-    /* 'amount' can never be a very large value here so typecasting it so a
-       signed 31 bit value should not cause problems even if ssize_t is
-       64bit */
-    *bytes_written += (long)amount;
+    *bytes_written = amount;
 
     if(http) {
       /* if we sent a piece of the body here, up the byte counter for it
@@ -1262,9 +1256,8 @@ CURLcode Curl_add_buffer_send(Curl_send_buffer **inp,
            queue it up and send it later when we get the chance. We must not
            loop here and wait until it might work again. */
 
+        ptr += amount;
         size -= amount;
-
-        ptr = in->buffer + amount;
 
         /* backup the currently set pointers */
         http->backup.fread_func = data->state.fread_func;
@@ -1280,11 +1273,12 @@ CURLcode Curl_add_buffer_send(Curl_send_buffer **inp,
 
         http->send_buffer = in;
         http->sending = HTTPSEND_REQUEST;
-
-        return CURLE_OK;
       }
-      http->sending = HTTPSEND_BODY;
-      /* the full buffer was sent, clean up and return */
+      else {
+        /* the full buffer was sent, return */
+        http->sending = HTTPSEND_BODY;
+      }
+      return CURLE_OK;
     }
     else {
       if((size_t)amount != size)
@@ -1298,11 +1292,62 @@ CURLcode Curl_add_buffer_send(Curl_send_buffer **inp,
         return CURLE_SEND_ERROR;
     }
   }
-  Curl_add_buffer_free(&in);
+  Curl_add_buffer_free(inp);
 
   return result;
 }
 
+/*
+ * Curl_add_buffer_send() sends a header buffer and frees all associated
+ * memory.  Body data may be appended to the header data if desired.
+ *
+ * Returns CURLcode
+ */
+CURLcode Curl_add_buffer_send(Curl_send_buffer **inp,
+                              struct connectdata *conn,
+
+                              /* add the number of sent bytes to this
+                                 counter */
+                              curl_off_t *bytes_written,
+
+                              /* how much of the buffer contains body data */
+                              size_t included_body_bytes,
+                              int socketindex)
+{
+  size_t amount;
+  size_t to_send;
+  CURLcode result;
+  size_t size;
+  size_t headersize;
+  Curl_send_buffer *in = *inp;
+
+  size = in->size_used;
+  headersize = size - included_body_bytes; /* the initial part that isn't body
+                                              is header */
+
+  amount = 0;
+  to_send = headersize;
+  result = add_buffer_send_dc(inp, conn, DATACONTEXT_HEADER, 0, to_send, 0,
+      &amount, socketindex);
+  *bytes_written += amount;
+  if(result || (amount != headersize))
+    return result;
+
+  if(included_body_bytes) {
+    amount = 0;
+    to_send = included_body_bytes;
+    result = add_buffer_send_dc(inp, conn, DATACONTEXT_BODY, headersize,
+        0, to_send, &amount, socketindex);
+    *bytes_written += amount;
+  }
+
+  if(!result && (amount == to_send)) {
+    /* no error and everything was sent, so clean up the buffer */
+    Curl_add_buffer_free(inp);
+  }
+
+  return result;
+}
 
 /*
  * add_bufferf() add the formatted input to the buffer.

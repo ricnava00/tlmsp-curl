@@ -19,6 +19,11 @@
  * KIND, either express or implied.
  *
  ***************************************************************************/
+/*
+ * Copyright (c) 2019 Not for Radio, LLC
+ *
+ * Released under the ETSI Software License (see LICENSE)
+ */
 #include "tool_setup.h"
 
 #ifdef HAVE_FCNTL_H
@@ -1554,6 +1559,9 @@ static CURLcode operate_do(struct GlobalConfig *global,
         if(config->altsvc)
           my_setopt_str(curl, CURLOPT_ALTSVC, config->altsvc);
 #endif
+
+        if(curlinfo->features & CURL_VERSION_TLMSP)
+          my_setopt_str(curl, CURLOPT_TLMSP_CFG_FILE, config->tlmsp_cfg_file);
 
         /* initialize retry vars for loop below */
         retry_sleep_default = (config->retry_delay) ?

@@ -19,6 +19,11 @@
  * KIND, either express or implied.
  *
  ***************************************************************************/
+/*
+ * Copyright (c) 2019 Not for Radio, LLC
+ *
+ * Released under the ETSI Software License (see LICENSE)
+ */
 
 #include "curl_setup.h"
 
@@ -372,6 +377,9 @@ static curl_version_info_data version_info = {
 #endif
 #if defined(USE_ALTSVC)
   | CURL_VERSION_ALTSVC
+#endif
+#if defined(USE_TLMSP)
+  | CURL_VERSION_TLMSP
 #endif
   ,
   NULL, /* ssl_version */

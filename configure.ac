@@ -156,6 +156,7 @@ AC_SUBST(PKGADD_VENDOR)
 dnl
 dnl initialize all the info variables
     curl_ssl_msg="no      (--with-{ssl,gnutls,nss,mbedtls,cyassl,schannel,secure-transport,mesalink,amissl} )"
+  curl_tlmsp_msg="no      (--with-tlmsp-tools)"
     curl_ssh_msg="no      (--with-libssh2)"
    curl_zlib_msg="no      (--with-zlib)"
  curl_brotli_msg="no      (--with-brotli)"
@@ -4037,6 +4038,89 @@ AC_HELP_STRING([--disable-cookies],[Disable cookies support]),
        AC_MSG_RESULT(yes)
 )
 
+dnl **********************************************************************
+dnl Check for the presence of TLMSP libraries and headers
+dnl **********************************************************************
+
+dnl Check for & handle argument to --with-tlmsp-tools.
+
+clean_CPPFLAGS=$CPPFLAGS
+clean_LDFLAGS=$LDFLAGS
+TLMSP_ENABLED=
+AC_ARG_WITH(tlmsp-tools,
+AC_HELP_STRING([--with-tlmsp-tools=PATH],[enabled TLMSP and search for tlmsp-tools in PATH])
+AC_HELP_STRING([--without-tlmsp-tools],[disable use of TLMSP]),
+               [OPT_TLMSP="$withval"])
+
+if test "$OPT_TLMSP" = "no" ; then
+    AC_MSG_WARN([TLMSP disabled])
+else
+  dnl Add a nonempty path to the compiler flags
+  if test -n "$OPT_TLMSP"; then
+     CPPFLAGS="-I$OPT_TLMSP/include $CPPFLAGS"
+     LDFLAGS="-L$OPT_TLMSP/lib$libsuff $LDFLAGS"
+  fi
+
+  AC_CHECK_HEADER(ucl.h,
+    [
+    dnl ucl.h was found
+    HAVE_UCL_H="1"
+    AC_CHECK_LIB(ucl, ucl_parser_new,
+                 [
+                 dnl the lib was found!
+                 HAVE_LIBUCL="1"
+    ])
+  ])
+
+  AC_CHECK_HEADER(tlmsp-tools/libtlmsp-cfg.h,
+    [
+    dnl libtlmsp-cfg.h was found
+    HAVE_LIBTLMSP_CFG_H="1"
+    AC_CHECK_LIB(tlmsp-cfg, tlmsp_cfg_parse_file,
+                 [
+                 dnl the lib was found!
+                 HAVE_LIBTLMSP_CFG="1"
+                 ],
+                 [],
+                 [
+                 -lucl
+    ])
+  ])
+
+  AC_CHECK_HEADER(tlmsp-tools/libtlmsp-util.h,
+    [
+    dnl libtlmsp-util.h was found
+    HAVE_LIBTLMSP_UTIL_H="1"
+    AC_CHECK_LIB(tlmsp-util, tlmsp_util_address_type,
+                 [
+                 dnl the lib was found!
+                 HAVE_LIBTLMSP_UTIL="1"
+    ])
+  ])
+
+  CPPFLAGS="$clean_CPPFLAGS"
+  LDFLAGS="$clean_LDFLAGS"
+  if test "$HAVE_LIBTLMSP_CFG_H" != "1" || test "$HAVE_LIBTLMSP_CFG" != "1"
+  then
+    AC_MSG_WARN([libtlmsp-cfg header and library are not both present!])
+  elif test "$HAVE_LIBTLMSP_UTIL_H" != "1" || test "$HAVE_LIBTLMSP_UTIL" != "1"
+  then
+    AC_MSG_WARN([libtlmsp-util header and library are not both present!])
+  elif test "$HAVE_UCL_H" != "1" || test "$HAVE_LIBUCL" != "1"
+  then
+    AC_MSG_WARN([libucl header and library are not both present!])
+  else
+    dnl All headers and libraries were found!
+    AC_MSG_NOTICE([found all required TLMSP headers and libraries])
+    AC_DEFINE(USE_TLMSP, 1, [to enable tlmsp])
+    TLMSP_ENABLED=1
+    curl_tlmsp_msg="enabled"
+    CPPFLAGS="-I$OPT_TLMSP/include $CPPFLAGS"
+    LDFLAGS="-L$OPT_TLMSP/lib$libsuff $LDFLAGS"
+    LIBS="-ltlmsp-cfg -ltlmsp-util -lucl $LIBS"
+  fi
+fi
+
 dnl ************************************************************
 dnl switch on/off alt-svc
 dnl
@@ -4104,6 +4188,9 @@ if test "x$OPENSSL_ENABLED" = "x1"; then
   SUPPORT_FEATURES="$SUPPORT_FEATURES SSL"
 elif test -n "$SSL_ENABLED"; then
   SUPPORT_FEATURES="$SUPPORT_FEATURES SSL"
+fi
+if test "x$TLMSP_ENABLED" = "x1"; then
+  SUPPORT_FEATURES="$SUPPORT_FEATURES TLMSP"
 fi
 if test "x$IPV6_ENABLED" = "x1"; then
   SUPPORT_FEATURES="$SUPPORT_FEATURES IPv6"
@@ -4322,7 +4409,7 @@ AC_OUTPUT
 
 CURL_GENERATE_CONFIGUREHELP_PM
 
-XC_AMEND_DISTCLEAN([lib src tests/unit tests/server tests/libtest docs/examples])
+#XC_AMEND_DISTCLEAN([lib src tests/unit tests/server tests/libtest docs/examples])
 
 AC_MSG_NOTICE([Configured to build curl/libcurl:
 
@@ -4336,6 +4423,7 @@ AC_MSG_NOTICE([Configured to build curl/libcurl:
 
   curl version:     ${CURLVERSION}
   SSL:              ${curl_ssl_msg}
+  TLMSP:            ${curl_tlmsp_msg}
   SSH:              ${curl_ssh_msg}
   zlib:             ${curl_zlib_msg}
   brotli:           ${curl_brotli_msg}

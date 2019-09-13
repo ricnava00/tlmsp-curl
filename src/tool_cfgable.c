@@ -19,6 +19,11 @@
  * KIND, either express or implied.
  *
  ***************************************************************************/
+/*
+ * Copyright (c) 2019 Not for Radio, LLC
+ *
+ * Released under the ETSI Software License (see LICENSE)
+ */
 #include "tool_setup.h"
 
 #include "tool_cfgable.h"
@@ -161,6 +166,8 @@ static void free_config_fields(struct OperationConfig *config)
 
   Curl_safefree(config->ftp_account);
   Curl_safefree(config->ftp_alternative_to_user);
+
+  Curl_safefree(config->tlmsp_cfg_file);
 }
 
 void config_free(struct OperationConfig *config)

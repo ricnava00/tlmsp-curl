@@ -19,6 +19,11 @@
  * KIND, either express or implied.
  *
  ***************************************************************************/
+/*
+ * Copyright (c) 2019 Not for Radio, LLC
+ *
+ * Released under the ETSI Software License (see LICENSE)
+ */
 #include "tool_setup.h"
 #ifdef HAVE_STRCASECMP
 #include <strings.h>
@@ -443,6 +448,8 @@ static const struct helptxt helptext[] = {
    "Do not send any TFTP options"},
   {"-z, --time-cond <time>",
    "Transfer based on a time condition"},
+  {"    --tlmsp <file>",
+   "Use TLMSP for https based on configuration in FILE"},
   {"    --tls-max <VERSION>",
    "Set maximum allowed TLS version"},
   {"    --tls13-ciphers <list>",
@@ -531,6 +538,7 @@ static const struct feat feats[] = {
   {"MultiSSL",       CURL_VERSION_MULTI_SSL},
   {"PSL",            CURL_VERSION_PSL},
   {"alt-svc",        CURL_VERSION_ALTSVC},
+  {"TLMSP",          CURL_VERSION_TLMSP},
 };
 
 void tool_help(void)

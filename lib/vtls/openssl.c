@@ -19,6 +19,11 @@
  * KIND, either express or implied.
  *
  ***************************************************************************/
+/*
+ * Copyright (c) 2019 Not for Radio, LLC
+ *
+ * Released under the ETSI Software License (see LICENSE)
+ */
 
 /*
  * Source file for all OpenSSL-specific code for the TLS/SSL layer. No code
@@ -82,6 +87,11 @@
 
 #include "warnless.h"
 #include "non-ascii.h" /* for Curl_convert_from_utf8 prototype */
+
+#ifdef USE_TLMSP
+#include <openssl/tlmsp.h>
+#include <tlmsp-tools/libtlmsp-util.h>
+#endif
 
 /* The last #include files should be: */
 #include "curl_memory.h"
@@ -1834,6 +1844,10 @@ end:
 
 static const char *ssl_msg_type(int ssl_ver, int msg)
 {
+#ifdef USE_TLMSP
+  if(ssl_ver == (TLMSP1_0_VERSION >> 8))
+      ssl_ver = SSL3_VERSION_MAJOR;
+#endif
 #ifdef SSL2_VERSION_MAJOR
   if(ssl_ver == SSL2_VERSION_MAJOR) {
     switch(msg) {
@@ -1909,6 +1923,34 @@ static const char *ssl_msg_type(int ssl_ver, int msg)
       case SSL3_MT_MESSAGE_HASH:
         return "Message hash";
 #endif
+#ifdef TLMSP_MT_MIDDLEBOX_HELLO
+      case TLMSP_MT_MIDDLEBOX_HELLO:
+        return "MboxHello";
+#endif
+#ifdef TLMSP_MT_MIDDLEBOX_CERT
+      case TLMSP_MT_MIDDLEBOX_CERT:
+        return "MboxCertificate";
+#endif
+#ifdef TLMSP_MT_MIDDLEBOX_KEY_EXCHANGE
+      case TLMSP_MT_MIDDLEBOX_KEY_EXCHANGE:
+        return "MboxKeyExchange";
+#endif
+#ifdef TLMSP_MT_MIDDLEBOX_HELLO_DONE
+      case TLMSP_MT_MIDDLEBOX_HELLO_DONE:
+        return "MboxHelloDone";
+#endif
+#ifdef TLMSP_MT_MIDDLEBOX_KEY_MATERIAL
+      case TLMSP_MT_MIDDLEBOX_KEY_MATERIAL:
+        return "MboxKeyMaterial";
+#endif
+#ifdef TLMSP_MT_MIDDLEBOX_KEY_CONFIRMATION
+      case TLMSP_MT_MIDDLEBOX_KEY_CONFIRMATION:
+        return "MboxKeyConf";
+#endif
+#ifdef TLMSP_MT_MIDDLEBOX_FINISHED
+      case TLMSP_MT_MIDDLEBOX_FINISHED:
+        return "MboxFinished";
+#endif
     }
   }
   return "Unknown";
@@ -1982,6 +2024,11 @@ static void ssl_tls_trace(int direction, int ssl_ver, int content_type,
     verstr = "TLSv1.3";
     break;
 #endif
+#ifdef TLMSP1_0_VERSION
+  case TLMSP1_0_VERSION:
+    verstr = "TLMSPv1.0";
+    break;
+#endif
   case 0:
     break;
   default:
@@ -2005,7 +2052,7 @@ static void ssl_tls_trace(int direction, int ssl_ver, int content_type,
 
     /* the info given when the version is zero is not that useful for us */
 
-    ssl_ver >>= 8; /* check the upper 8 bits only below */
+    ssl_ver >>= 8; /* check the upper 12 bits only below */
 
     /* SSLv2 doesn't seem to have TLS record-type headers, so OpenSSL
      * always pass-up content-type as 0. But the interesting message-type
@@ -2013,6 +2060,10 @@ static void ssl_tls_trace(int direction, int ssl_ver, int content_type,
      */
     if(ssl_ver == SSL3_VERSION_MAJOR && content_type)
       tls_rt_name = tls_rt_type(content_type);
+#ifdef USE_TLMSP
+    else if(ssl_ver == (TLMSP1_0_VERSION >> 8) && content_type)
+      tls_rt_name = tls_rt_type(content_type);
+#endif
     else
       tls_rt_name = "";
 
@@ -2287,6 +2338,24 @@ static int ossl_new_session_cb(SSL *ssl, SSL_SESSION *ssl_sessionid)
   return res;
 }
 
+#ifdef USE_TLMSP
+static int tlmsp_validate_discovery_results(SSL *ssl,
+                                            void *arg)
+{
+  struct connectdata *conn = arg;
+  TLMSP_Middleboxes *middleboxes;
+  const struct tlmsp_cfg *cfg = conn->tlmsp_cfg;
+  int result;
+
+  middleboxes = TLMSP_get_middleboxes_instance(ssl);
+  if(middleboxes == NULL)
+    return (0);
+  result = tlmsp_cfg_validate_middlebox_list_client_openssl(cfg, middleboxes);
+  TLMSP_middleboxes_free(middleboxes);
+  return (result);
+}
+#endif
+
 static CURLcode ossl_connect_step1(struct connectdata *conn, int sockindex)
 {
   CURLcode result = CURLE_OK;
@@ -2319,6 +2388,12 @@ static CURLcode ossl_connect_step1(struct connectdata *conn, int sockindex)
   const char * const ssl_capath = SSL_CONN_CONFIG(CApath);
   const bool verifypeer = SSL_CONN_CONFIG(verifypeer);
   const char * const ssl_crlfile = SSL_SET_OPTION(CRLfile);
+#ifdef USE_TLMSP
+  const struct tlmsp_cfg *cfg;
+  TLMSP_Contexts *tlmsp_contexts;
+  int address_type;
+  TLMSP_Middleboxes *tlmsp_middleboxes;
+#endif
   char error_buffer[256];
 
   DEBUGASSERT(ssl_connect_1 == connssl->connecting_state);
@@ -2344,6 +2419,10 @@ static CURLcode ossl_connect_step1(struct connectdata *conn, int sockindex)
     req_method = TLS_client_method();
 #else
     req_method = SSLv23_client_method();
+#endif
+#ifdef USE_TLMSP
+    if(conn->tlmsp_cfg)
+      req_method = TLMSP_client_method();
 #endif
     use_sni(TRUE);
     break;
@@ -2387,6 +2466,71 @@ static CURLcode ossl_connect_step1(struct connectdata *conn, int sockindex)
           ossl_strerror(ERR_peek_error(), error_buffer, sizeof(error_buffer)));
     return CURLE_OUT_OF_MEMORY;
   }
+
+#ifdef USE_TLMSP
+  if(conn->tlmsp_cfg && !conn->tlmsp_reconnect_state) {
+    cfg = conn->tlmsp_cfg;
+
+    /* configure contexts */
+    tlmsp_contexts = tlmsp_cfg_contexts_to_openssl(cfg);
+    if(!tlmsp_contexts) {
+      failf(data, "SSL: couldn't convert TLMSP contexts to openssl format");
+      return CURLE_OUT_OF_MEMORY;
+    }
+    if(!TLMSP_set_contexts(BACKEND->ctx, tlmsp_contexts)) {
+      failf(data, "SSL: couldn't set TLMSP contexts: %s",
+          ossl_strerror(ERR_peek_error(), error_buffer, sizeof(error_buffer)));
+      TLMSP_contexts_free(tlmsp_contexts);
+      return CURLE_OUT_OF_MEMORY;
+    }
+    TLMSP_contexts_free(tlmsp_contexts);
+
+    /* configure client and server addresses */
+    address_type = tlmsp_util_address_type(cfg->client.address);
+    if(address_type == TLMSP_UTIL_ADDRESS_UNKNOWN) {
+      failf(data, "SSL: couldn't determine TLMSP address type for '%s'",
+          cfg->client.address);
+      return CURLE_BAD_FUNCTION_ARGUMENT;
+    }
+    if(!TLMSP_set_client_address(BACKEND->ctx, address_type,
+            (const uint8_t *)cfg->client.address,
+            strlen(cfg->client.address))) {
+      failf(data, "SSL: couldn't set TLMSP client address: %s",
+          ossl_strerror(ERR_peek_error(), error_buffer, sizeof(error_buffer)));
+      return CURLE_OUT_OF_MEMORY;
+    }
+
+    address_type = tlmsp_util_address_type(cfg->server.address);
+    if(address_type == TLMSP_UTIL_ADDRESS_UNKNOWN) {
+      failf(data, "SSL: couldn't determine TLMSP address type for '%s'",
+          cfg->server.address);
+      return CURLE_BAD_FUNCTION_ARGUMENT;
+    }
+    if(!TLMSP_set_server_address(BACKEND->ctx, address_type,
+            (const uint8_t *)cfg->server.address,
+            strlen(cfg->server.address))) {
+      failf(data, "SSL: couldn't set TLMSP server address: %s",
+          ossl_strerror(ERR_peek_error(), error_buffer, sizeof(error_buffer)));
+      return CURLE_OUT_OF_MEMORY;
+    }
+
+    tlmsp_middleboxes =
+        tlmsp_cfg_initial_middlebox_list_to_openssl(conn->tlmsp_cfg);
+    if(tlmsp_middleboxes) {
+      if(!TLMSP_set_initial_middleboxes(BACKEND->ctx, tlmsp_middleboxes)) {
+        failf(data, "SSL: couldn't set TLMSP initial middlebox list: %s",
+            ossl_strerror(ERR_peek_error(), error_buffer,
+            sizeof(error_buffer)));
+        TLMSP_middleboxes_free(tlmsp_middleboxes);
+        return CURLE_OUT_OF_MEMORY;
+      }
+      TLMSP_middleboxes_free(tlmsp_middleboxes);
+    }
+
+    TLMSP_set_discovery_cb(BACKEND->ctx, tlmsp_validate_discovery_results,
+        conn);
+  }
+#endif
 
 #ifdef SSL_MODE_RELEASE_BUFFERS
   SSL_CTX_set_mode(BACKEND->ctx, SSL_MODE_RELEASE_BUFFERS);
@@ -2734,6 +2878,23 @@ static CURLcode ossl_connect_step1(struct connectdata *conn, int sockindex)
           "TLS extension\n");
 #endif
 
+#ifdef USE_TLMSP
+  if(conn->tlmsp_reconnect_state) {
+    result = CURLE_OK;
+    if(!TLMSP_set_reconnect_state(BACKEND->handle,
+            conn->tlmsp_reconnect_state)) {
+      failf(data, "SSL: couldn't set TLMSP reconnect state: %s",
+          ossl_strerror(ERR_peek_error(), error_buffer,
+              sizeof(error_buffer)));
+      result = CURLE_OUT_OF_MEMORY;
+    }
+    TLMSP_reconnect_state_free(conn->tlmsp_reconnect_state);
+    conn->tlmsp_reconnect_state = NULL;
+    if(result)
+      return result;
+  }
+#endif
+
   /* Check if there's a cached ID we can/should use here! */
   if(SSL_SET_OPTION(primary.sessionid)) {
     void *ssl_sessionid = NULL;
@@ -2822,6 +2983,13 @@ static CURLcode ossl_connect_step2(struct connectdata *conn, int sockindex)
     if(SSL_ERROR_WANT_ASYNC == detail) {
       connssl->connecting_state = ssl_connect_2;
       return CURLE_OK;
+    }
+#endif
+#ifdef USE_TLMSP
+    if(SSL_ERROR_WANT_RECONNECT == detail) {
+      connssl->connecting_state = ssl_connect_2;
+      conn->tlmsp_reconnect_state = TLMSP_get_reconnect_state(BACKEND->handle);
+      return CURLE_TRANSPORT_RECONNECT;
     }
 #endif
     else {
@@ -3521,6 +3689,7 @@ static CURLcode ossl_connect_step3(struct connectdata *conn, int sockindex)
 
 static Curl_recv ossl_recv;
 static Curl_send ossl_send;
+static Curl_send_dc ossl_send_dc;
 
 static CURLcode ossl_connect_common(struct connectdata *conn,
                                     int sockindex,
@@ -3621,6 +3790,12 @@ static CURLcode ossl_connect_common(struct connectdata *conn,
     connssl->state = ssl_connection_complete;
     conn->recv[sockindex] = ossl_recv;
     conn->send[sockindex] = ossl_send;
+#ifdef USE_TLMSP
+    /* If this connection is using TLMSP, then enable the datacontext aware
+       send. */
+    if(conn->tlmsp_cfg)
+      conn->send_dc[sockindex] = ossl_send_dc;
+#endif
     *done = TRUE;
   }
   else
@@ -3733,6 +3908,32 @@ static ssize_t ossl_send(struct connectdata *conn,
   }
   *curlcode = CURLE_OK;
   return (ssize_t)rc; /* number of bytes */
+}
+
+static ssize_t ossl_send_dc(struct connectdata *conn,
+                         int sockindex,
+                         const void *mem,
+                         size_t len,
+                         datacontext dc,
+                         CURLcode *curlcode)
+{
+  struct ssl_connect_data *connssl = &conn->ssl[sockindex];
+  tlmsp_context_id_t context_id;
+  char error_buffer[256];
+
+  context_id = conn->tlmsp_context_id_for_dc[dc];
+  if(context_id == 0) {
+    *curlcode = CURLE_UNKNOWN_DATACONTEXT;
+    return -1;
+  }
+
+  if(!TLMSP_set_current_context(BACKEND->handle, context_id)) {
+    failf(conn->data, "SSL: couldn't set TLMSP context to %u: %s", context_id,
+        ossl_strerror(ERR_peek_error(), error_buffer, sizeof(error_buffer)));
+    return CURLE_OUT_OF_MEMORY;
+  }
+
+  return ossl_send(conn, sockindex, mem, len, curlcode);
 }
 
 static ssize_t ossl_recv(struct connectdata *conn, /* connection data */
