@@ -90,6 +90,7 @@
 
 #ifdef USE_TLMSP
 #include <openssl/tlmsp.h>
+#include <tlmsp-tools/libtlmsp-cfg-openssl.h>
 #include <tlmsp-tools/libtlmsp-util.h>
 #endif
 
@@ -2340,18 +2341,15 @@ static int ossl_new_session_cb(SSL *ssl, SSL_SESSION *ssl_sessionid)
 
 #ifdef USE_TLMSP
 static int tlmsp_validate_discovery_results(SSL *ssl,
-                                            void *arg)
+                                            void *arg,
+                                            TLMSP_Middleboxes *middleboxes)
 {
   struct connectdata *conn = arg;
-  TLMSP_Middleboxes *middleboxes;
   const struct tlmsp_cfg *cfg = conn->tlmsp_cfg;
   int result;
 
-  middleboxes = TLMSP_get_middleboxes_instance(ssl);
-  if(middleboxes == NULL)
-    return (0);
+  (void)ssl;
   result = tlmsp_cfg_validate_middlebox_list_client_openssl(cfg, middleboxes);
-  TLMSP_middleboxes_free(middleboxes);
   return (result);
 }
 #endif
@@ -2988,7 +2986,7 @@ static CURLcode ossl_connect_step2(struct connectdata *conn, int sockindex)
 #ifdef USE_TLMSP
     if(SSL_ERROR_WANT_RECONNECT == detail) {
       connssl->connecting_state = ssl_connect_2;
-      conn->tlmsp_reconnect_state = TLMSP_get_reconnect_state(BACKEND->handle);
+      data->state.transport_reconnect_state = TLMSP_get_reconnect_state(BACKEND->handle);
       return CURLE_TRANSPORT_RECONNECT;
     }
 #endif

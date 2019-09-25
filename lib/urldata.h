@@ -1296,6 +1296,9 @@ struct UrlState {
 
   struct connectdata *lastconnect; /* The last connection, NULL if undefined */
 
+  const void *transport_reconnect_state; /* transport state to use in the event
+                                            of CURLE_TRANSPORT_RECONNECT */
+
   char *headerbuff; /* allocated buffer to store headers in */
   size_t headersize;   /* size of the allocation */
 

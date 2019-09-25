@@ -1624,16 +1624,19 @@ static CURLcode operate_do(struct GlobalConfig *global,
 
           /* if retry-max-time is non-zero, make sure we haven't exceeded the
              time */
-          if(retry_numretries &&
-             (!config->retry_maxtime ||
-              (tvdiff(tvnow(), retrystart) <
-               config->retry_maxtime*1000L)) ) {
+          if((CURLE_TRANSPORT_RECONNECT == result) ||
+             (retry_numretries &&
+              (!config->retry_maxtime ||
+               (tvdiff(tvnow(), retrystart) <
+                config->retry_maxtime*1000L))) ) {
+            printf("retry\n");
             enum {
               RETRY_NO,
               RETRY_TIMEOUT,
               RETRY_CONNREFUSED,
               RETRY_HTTP,
               RETRY_FTP,
+              RETRY_TRANSPORT_RECONNECT,
               RETRY_LAST /* not used */
             } retry = RETRY_NO;
             long response;
@@ -1679,6 +1682,11 @@ static CURLcode operate_do(struct GlobalConfig *global,
                   break;
                 }
               }
+            }
+            else if (CURLE_TRANSPORT_RECONNECT == result) {
+              retry = RETRY_TRANSPORT_RECONNECT;
+              retry_numretries++; /* don't count this against the retry limit */
+              retry_sleep = 0;
             } /* if CURLE_OK */
             else if(result) {
               long protocol;
@@ -1702,10 +1710,11 @@ static CURLcode operate_do(struct GlobalConfig *global,
                 "timeout",
                 "connection refused",
                 "HTTP error",
-                "FTP error"
+                "FTP error",
+                "transport reconnect required"
               };
 
-              warnf(config->global, "Transient problem: %s "
+              warnf(config->global, "Transient problem: %s. "
                     "Will retry in %ld seconds. "
                     "%ld retries left.\n",
                     m[retry], retry_sleep/1000L, retry_numretries);

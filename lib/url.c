@@ -3472,6 +3472,7 @@ static CURLcode create_conn(struct Curl_easy *data,
   char *first_hop_host;
   char *first_hop_port_str;
   int first_hop_addr_type;
+  size_t first_hop_addr_len;
   int remote_port;
   int i;
   const struct tlmsp_cfg_context *context;
@@ -3761,12 +3762,6 @@ static CURLcode create_conn(struct Curl_easy *data,
       result = CURLE_URL_MALFORMAT;
       goto out;
     }
-    else if(data->state.lastconnect &&
-        data->state.lastconnect->tlmsp_reconnect_state) {
-      conn->tlmsp_reconnect_state =
-          data->state.lastconnect->tlmsp_reconnect_state;
-      data->state.lastconnect->tlmsp_reconnect_state = NULL;
-    }
     else {
       /* TLMSP enabled for this connection */
       conn->tlmsp_cfg = tlmsp_cfg;
@@ -3777,18 +3772,35 @@ static CURLcode create_conn(struct Curl_easy *data,
           conn->tlmsp_context_id_for_dc[i] = context->id;
       }
 
-      first_hop_addr = tlmsp_cfg_get_client_first_hop_address(tlmsp_cfg, false,
-          true, &first_hop_addr_type);
-      if(!first_hop_addr) {
-        free(cfg_host);
-        free(cfg_port_str);
-        failf(data, "SSL: couldn't determine TLMSP first hop address");
-        result = CURLE_OUT_OF_MEMORY;
-        goto out;
+      if(data->state.transport_reconnect_state) {
+        conn->tlmsp_reconnect_state = data->state.transport_reconnect_state;
+        data->state.transport_reconnect_state = NULL;
+
+        if(!TLMSP_get_first_hop_address_reconnect_ex(
+                conn->tlmsp_reconnect_state, &first_hop_addr_type,
+                (uint8_t **)&first_hop_addr, &first_hop_addr_len, 1)) {
+          free(cfg_host);
+          free(cfg_port_str);
+          failf(data,
+              "SSL: couldn't determine TLMSP reconnect first hop address");
+          result = CURLE_OUT_OF_MEMORY;
+          goto out;
+        }
+      } else {
+        first_hop_addr = tlmsp_cfg_get_client_first_hop_address(tlmsp_cfg, false,
+            true, &first_hop_addr_type);
+        if(!first_hop_addr) {
+          free(cfg_host);
+          free(cfg_port_str);
+          failf(data, "SSL: couldn't determine TLMSP first hop address");
+          result = CURLE_OUT_OF_MEMORY;
+          goto out;
+        }
+        first_hop_addr_len = strlen(first_hop_addr);
       }
 
       if(!tlmsp_util_address_to_host_and_port(first_hop_addr_type,
-              (const uint8_t *)first_hop_addr, strlen(first_hop_addr), 0,
+              (const uint8_t *)first_hop_addr, first_hop_addr_len, 0,
               &first_hop_host, &first_hop_port_str)) {
         free(first_hop_addr);
         free(cfg_host);
