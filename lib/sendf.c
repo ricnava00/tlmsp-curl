@@ -55,8 +55,7 @@
 #include "memdebug.h"
 
 const char *datacontext_names[DATACONTEXT_COUNT] = {
-  [DATACONTEXT_HEADER] = "header",
-  [DATACONTEXT_BODY]   ="body",
+  [DATACONTEXT_ALL] = "header",
 };
 
 #ifdef CURL_DO_LINEEND_CONV

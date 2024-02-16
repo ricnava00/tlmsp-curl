@@ -1326,20 +1326,12 @@ CURLcode Curl_add_buffer_send(Curl_send_buffer **inp,
                                               is header */
 
   amount = 0;
-  to_send = headersize;
-  result = add_buffer_send_dc(inp, conn, DATACONTEXT_HEADER, 0, to_send, 0,
-      &amount, socketindex);
+  to_send = size;
+  result = add_buffer_send_dc(inp, conn, DATACONTEXT_ALL, 0, to_send, 0,
+			      &amount, socketindex);
   *bytes_written += amount;
-  if(result || (amount != headersize))
+  if(result || (amount != size))
     return result;
-
-  if(included_body_bytes) {
-    amount = 0;
-    to_send = included_body_bytes;
-    result = add_buffer_send_dc(inp, conn, DATACONTEXT_BODY, headersize,
-        0, to_send, &amount, socketindex);
-    *bytes_written += amount;
-  }
 
   if(!result && (amount == to_send)) {
     /* no error and everything was sent, so clean up the buffer */

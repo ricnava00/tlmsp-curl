@@ -53,8 +53,7 @@ void Curl_failf(struct Curl_easy *, const char *fmt, ...);
 #define failf Curl_failf
 
 typedef enum {
-  DATACONTEXT_HEADER,
-  DATACONTEXT_BODY,
+  DATACONTEXT_ALL,
 
   /* final entry gives the count */
   DATACONTEXT_COUNT
